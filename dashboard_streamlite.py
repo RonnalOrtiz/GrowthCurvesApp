@@ -40,7 +40,7 @@ def gompertz(days, b0, b1, b2):
 # -----------------------------------------------------------
 # Plotting function
 # -----------------------------------------------------------
-def plot_growth_curve(params_df, region):
+def plot_growth_curve(params_df, region, user_data=None):
     row = params_df.loc[params_df["ID"] == region].iloc[0]
     b0, b1, b2 = row["b0"], row["b1"], row["b2"]
     x = np.linspace(0, 800, 200)
@@ -48,6 +48,17 @@ def plot_growth_curve(params_df, region):
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"Gompertz - {region}"))
+
+    # Overlay observed user data
+    if user_data is not None and not user_data.empty:
+        fig.add_trace(go.Scatter(
+            x=user_data["Age"],
+            y=user_data["Weight"],
+            mode="markers",
+            name="Observed Data",
+            marker=dict(size=8, color="red")
+        ))
+
     fig.update_layout(
         title=f"Growth Curve for {region}",
         xaxis_title="Days",
@@ -55,6 +66,31 @@ def plot_growth_curve(params_df, region):
         template="plotly_white"
     )
     st.plotly_chart(fig, use_container_width=True)
+
+# -----------------------------------------------------------
+# User data input section (manual weight entry)
+# -----------------------------------------------------------
+st.sidebar.header("Animal Weight Data Input")
+input_mode = st.sidebar.radio("Select input mode:", ["Birth–Weaning", "Weaning–Slaughter"])
+
+# Place form inside an expander
+with st.expander("Click to enter observed weights manually"):
+    st.write(f"Enter observed weights for {input_mode.lower()} period.")
+    with st.form("weights_form"):
+        st.write("Enter age (days) and observed weight (kg):")
+        user_data = []
+        for i in range(1, 6):  # up to 5 entries
+            col1, col2 = st.columns(2)
+            with col1:
+                age = st.number_input(f"Age {i} (days)", min_value=0, max_value=800, step=10, key=f"age_{i}")
+            with col2:
+                weight = st.number_input(f"Weight {i} (kg)", min_value=0.0, step=1.0, key=f"wt_{i}")
+            if age > 0 and weight > 0:
+                user_data.append((age, weight))
+        submitted = st.form_submit_button("Add data")
+
+df_obs = pd.DataFrame(user_data, columns=["Age", "Weight"]) if user_data else pd.DataFrame()
+
 
 # -----------------------------------------------------------
 # Main Streamlit UI
@@ -72,8 +108,23 @@ if not {"ID", "b0", "b1", "b2"}.issubset(params.columns):
 regions = params["ID"].dropna().unique().tolist()
 selected_region = st.sidebar.selectbox("Select region", regions)
 
+from scipy.optimize import curve_fit
+
+# Optional: fit the model to user-entered data
+if submitted and not df_obs.empty:
+    xdata = df_obs["Age"].values
+    ydata = df_obs["Weight"].values
+    try:
+        popt, _ = curve_fit(gompertz, xdata, ydata, p0=[400, 3, 0.01])
+        st.sidebar.success(f"Fitted parameters: b0={popt[0]:.2f}, b1={popt[1]:.2f}, b2={popt[2]:.4f}")
+        # Update current region’s parameters with fitted ones
+        params.loc[params["ID"] == selected_region, ["b0", "b1", "b2"]] = popt
+    except Exception as e:
+        st.sidebar.error(f"Model fitting failed: {e}")
+
+
 if st.sidebar.button("Show Growth Curve"):
-    plot_growth_curve(params, selected_region)
+    plot_growth_curve(params, selected_region, df_obs)
     st.success(f"Displayed curve for {selected_region}")
 
 st.markdown("---")
